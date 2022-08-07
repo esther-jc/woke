@@ -1,0 +1,88 @@
+<!-- update.html is used to update the submitted form, looks similar
+but different due to backend -->
+{% extends "base.html" %}
+
+{% block main_content %}
+
+<h1>Update Review Form</h1>
+
+<p class="reviewdir">Update or delete your review:</p><br>
+
+<!-- form content -->
+<form id="reviewform" method="POST" action="{{url_for('update_review')}}">
+
+    <label for="courseID">Course ID (i.e. DEPT123):</label>
+    <input type="text" id="courseID" name="courseID" maxlength="7"
+            value= "{{ cId }}"/>
+    <input type="hidden" name="rId" value="{{ rId }}"/>
+    <br><br>
+
+    <label for="hours">Hours per week:</label>
+    <input required id="hours" type="number" name="hours" min="0" max="168" value = "{{ hours }}">
+    <br><br>
+
+    <span>Attendance:</span>
+        {% if amode == 'mandatory' %}
+            <input required type="radio" id="attendMand" name="attend" value="mandatory" checked/>
+            <label class="attendance" for="attendMand">mandatory</label>
+
+            <input required type="radio" id="attendNot" name="attend" value="not mandatory">
+            <label class="attendance" for="attendNot">not mandatory</label>
+        {% elif amode == 'not mandatory' %}
+            <input required type="radio" id="attendMand" name="attend" value="mandatory">
+            <label class="attendance" for="attendMand">mandatory</label>
+
+            <input required type="radio" id="attendNot" name="attend" value="not mandatory" checked/>
+            <label class="attendance" for="attendNot">not mandatory</label>
+        {% endif %}
+    <br><br>
+
+    <span>Remote?:</span>
+    {% if rmode == 'yes' %}
+        <input required type="radio" id="remoteY" name="remote" value="yes" checked/>
+        <label class="remote" for="remoteY">yes</label>
+
+        <input required type="radio" id="remoteN" name="remote" value="no">
+        <label class="remote" for="remoteN">no</label>
+    {% elif amode == 'no' %}
+        <input required type="radio" id="remoteY" name="remote" value="yes">
+        <label class="remote" for="remoteY">yes</label>
+
+        <input required type="radio" id="remoteN" name="remote" value="no" checked/>
+        <label class="remote" for="remoteN">no</label>
+    {% endif %}
+    <br><br>
+
+    <fieldset>
+        <legend class="ratings">Ratings on...</legend>
+        <p>(1 is least, 5 is most)</p>
+        
+        <label for="fun">how fun?</label>
+        <input type="range" id="fun" name="fun" min="1" max="5" value = "{{ fun }}"
+        oninput="sliderNum1.value = this.value">
+        <output id="sliderNum1">{{fun}}</output>
+        <br><br>
+
+        <label for="relevance">relevance to real world applications</label>
+        <input type="range" id="relevance" name="relevance" min="1" max="5" value = "{{ relevance }}"
+        oninput="sliderNum2.value = this.value">
+        <output id="sliderNum2">{{relevance}}</output>
+    </fieldset>
+    <br>
+
+    <label for="prof">Professor (First and Last):</label>
+    <input type="text" id="prof" name="prof" maxlength="30" placeholder="Scott Anderson" value = "{{ professor }}">
+    <br><br><br>
+
+    <label for="textInput">What was your opinion on the course?</label><br><br>
+    <input type = "text" required id="textInput" name="textInput" value = "{{ text }}">
+    <br><br>
+
+    <label>Syllabus: <input type="file" name="syllabus"></label>
+    
+    <input class = "submitButton" type="submit" name="submit" value="Update">
+    <input class = "submitButton" type="submit" name="submit" value="Delete">
+
+</form>
+
+{% endblock %}

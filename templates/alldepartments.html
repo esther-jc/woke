@@ -1,0 +1,17 @@
+<!-- show list of depts -->
+{% extends "base.html" %}
+
+{% block main_content %}
+<h1>All Departments at Wellesley:</h1>
+
+<!-- the department name and link to its courses -->
+<div id="departments">
+    <ul>
+        {% for dept in departments %}
+        <li id = "depts" >
+            <a class="deptslink" href="{{url_for('courses_in_dept', department = dept.department)}}">
+            {{ dept.department }}</a></li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}

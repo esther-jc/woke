@@ -1,0 +1,34 @@
+<!-- home page -->
+{% extends "base.html" %}
+
+{% block main_content %}
+<h1>Welcome to WOKE</h1>
+
+<!-- introduction -->
+<p id='welcome'>WOKE (Wellesley On Kourse Evaluations) is a place where 
+    you can submit your own reviews
+    <br>on courses you've taken at Wellesley or browse other student 
+    submissions. 
+    <br><br>Feel free to look by department and view course listings 
+    from there, <br>or search for it directly in the search box! 
+    <br><br><br><br><br>
+    Or check out the random course generated below!</p>
+
+<!-- random course generator on home page -->
+<div id='randomGenerator'>
+    <table id='randomCourse'>
+        <tr>
+            <th>Course ID</th>
+            <th>Name</th>
+            <th>Reviews</th>
+        </tr>
+        <tr>
+            <td>{{randomId}}</td>
+            <td>{{randomName}}</td>
+            <td><a href="{{url_for('course',cid=randomId)}}">
+                click here to view</a></td>
+        </tr>
+    </table>
+</div>
+
+{% endblock %}

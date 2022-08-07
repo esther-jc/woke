@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang='en'>
+
+<head>
+  <meta charset='utf-8'>
+  <meta name=author content="">
+  <title>{{ page_title }}</title>
+  <link rel='stylesheet' href="{{url_for('static', filename = 'style.css')}}">
+  {% block head_stuff %}
+  {% endblock %}
+</head>
+
+<body>
+  <!-- flash messages -->
+  {% with messages = get_flashed_messages() %}
+  {% if messages %}
+  <div id="messages">
+    {% for msg in messages %}
+    <p>{{msg}}</p>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endwith %}
+
+  <!-- search box to search courses -->
+  <form id="search" method="GET" action="{{url_for('search')}}">
+    <label for = "searchbar">Search by course ID or course name:</label>
+    <input id = "searchbar" type="text" placeholder="Search..." name="search">
+    <button class = "submitButton" type="submit">submit</button>
+  </form> <br>
+
+  <!-- navigation bar to view depts/courses, view/submit/edit reviews,logout -->
+  <nav>
+    <ul>
+      <li><a href="{{url_for('index')}}">Home</a></li>
+      <li><a href="{{url_for('all_departments')}}">Departments</a></li>
+      <li><a href="{{url_for('submit_review')}}">Submit Review</a></li>
+      <li><a href="{{url_for('my_reviews')}}">My Reviews</a></li>
+      <li><form method="GET" action="{{url_for('cas.logout')}}">
+      <button>Logout</button></form></li>
+    </ul>
+  </nav>
+  <br><br>
+
+  {% block main_content %}
+  {% endblock %}
+
+  <script src="//code.jquery.com/jquery-3.4.1.min.js"></script>
+  {% block end_scripts %}
+  {% endblock %}
+
+  <br><br><br><br><br>
+</body>
+</html>

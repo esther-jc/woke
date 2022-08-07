@@ -1,0 +1,189 @@
+<!-- shows reviews and details of one particular course -->
+
+{% extends 'base.html' %}
+
+{% block main_content %}
+<h1 class="class_detail" cId="{{course_details['cId']}}">
+    {{course_details['course_name']}}</h1>
+<h2>Department: {{course_details['department']}}</h2>
+<br>
+
+<!-- course overview (i.e. displaying averages collected from reviews) -->
+<div id="overview">
+    <br>
+    <table id="averages">
+        <tr>
+            <th>How Fun</th>
+            <th>Relevance to Real World</th>
+            <th>Hours per week</th>
+        </tr>
+        <tr id="avgNums">
+            <td>{{howfun}}/5</td>
+            <td>{{relrealworld}}/5</td>
+            <td>{{hrswk}} hrs</td>
+        </tr>
+    </table>
+    <br>
+</div>
+<br><br>
+
+<!-- Displaying buttons, to sort reviews for a course by
+        recent, how fun, relevancy  -->
+<table id="sort-by">
+    <tr>
+        <td><p>Sort reviews by :</p></td>
+        <td>
+        <form action="" method="POST">
+            <select name="sort_by" required>
+                <option value="" disabled selected hidden> sort by...</option>
+                <option value="how recent">most to least recent</option>
+                <option value="how fun">most to least fun</option>
+                <option value="how relevant">most to least relevant</option>
+            </select>
+            <input class = 'submitButton' type="submit" value="sort">
+        </form>
+        </td>
+    </tr>
+</table>
+
+<!-- display all reviews for the course -->
+<div id="reviewsForCourse">
+{% for review in course_reviews %}
+<div class="review" funness="{{review['how_fun']}}">
+    <!-- keeping track of how fun for javascript/change color of review -->
+    <p><b>Review {{review['rId']}}</b></p>
+    <table>
+        <tr>
+            <td>Course</td>
+            <td>: {{review['cId']}}</td>
+        </tr>
+        <tr>
+            <td>How Fun</td>
+            <td>: {{review['how_fun']}}</td>
+        </tr>
+        {% if review['hours'] %}
+        <tr>
+            <td>Hours spent per week</td>
+            <td>: {{review['hours']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['remote'] %}
+        <tr>
+            <td>Is it remote</td>
+            <td>: {{review['remote']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['attendance'] %}
+        <tr>
+            <td>Attendance</td>
+            <td>: {{review['attendance']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['professor'] %}
+        <tr>
+            <td>Professor</td>
+            <td>: {{review['professor']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['relevance'] %}
+        <tr>
+            <td>Relevance</td>
+            <td>: {{review['relevance']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['date_submitted'] %}
+        <tr>
+            <td>Submitted on</td>
+            <td>: {{review['date_submitted']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['username'] %}
+        <tr>
+            <td>Submitted by</td>
+            <td>: {{review['username']}}</td>
+        </tr>
+        {% endif %}
+        <tr>
+            <td>Review</td>
+            <td>: {{review['write_up']}}</td>
+        </tr>
+        {% if review['syllabus'] %}
+        <tr>
+            <td>Syllabus</td>
+            <td>:<a href="{{ url_for('download', rid=review['rId']) }}"> Download</a></td>
+        </tr>
+        {% endif %}
+        <!-- up and down votes on review -->
+        <tr class = "thumbs">
+            <td>
+                <button class="thumb_up" value="{{review['rId']}}">
+                    &#x1F44D;</button>
+                <span class="up_votes" data-rid="{{review['rId']}}">
+                    {{review['upvotes']}}</span>
+                <button class="thumb_down" value="{{review['rId']}}">
+                    &#x1F44E;</button>
+                <span class="down_votes" data-rid="{{review['rId']}}">
+                    {{review['downvotes']}}</span>
+            </td>
+        </tr>
+    </table>
+</div>
+<br>
+{% endfor %}
+</div>
+{% endblock %}
+
+{% block end_scripts %}
+<script>
+    // changes color of each review according to how fun rating
+    // ranges from green to orange to red, with most fun rating (5)
+    // being green and least red
+    $(document).ready(function () {
+        $(".review").each(function (evt) {
+            let funness = $(this).attr("funness");
+            console.log("funness=" + funness);
+            if (funness == 5) {
+                $(this).css("background", "#bdffbe");
+            } else if (funness == 4) {
+                $(this).css("background", "#e6ffbd");
+            } else if (funness == 3) {
+                $(this).css("background", "#feffbd");
+            } else if (funness == 2) {
+                $(this).css("background", "#ffe6bd");
+            } else if (funness == 1) {
+                $(this).css("background", "#ffc5bd");
+            }
+        })
+    });
+
+    // updates up and down votes and their number displayed
+    function update_votes(resp) {
+        console.log(resp.rid);
+        var up_element = $(".thumbs").find($(".up_votes[data-rid='" + 
+                            resp.rid + "']"));
+        var down_element = $(".thumbs").find($(".down_votes[data-rid='" + 
+                            resp.rid + "']"));
+
+        $(up_element).text(resp.up);
+        $(down_element).text(resp.down);
+    }
+
+    var update_url = "{{url_for('vote')}}";
+
+    // when up/down vote clicked, displaying in console and updating
+    $(".thumb_up").on('click', function (evt) {
+        console.log(this);
+        var rid = $(this).attr("value");
+        console.log('rid is', rid);
+        $.post(update_url, { up: true, rid: rid }, update_votes);
+    });
+    $(".thumb_down").on('click', function (evt) {
+        console.log(this);
+        var rid = $(this).attr("value");
+        console.log('rid is', rid);
+        $.post(update_url, { down: true, rid: rid }, update_votes);
+    });
+
+</script>
+
+{% endblock %}

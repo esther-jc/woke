@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang='en'>
+<head>
+    <meta charset='utf-8'>
+    <meta name=author content="">
+    <title>WOKE Log-in</title>
+    <link rel='stylesheet' href="{{url_for('static', filename = 'style.css')}}">
+</head>
+<body>
+
+<!-- flash messages login -->
+{% with messages = get_flashed_messages() %}
+    {% if messages %}
+        <div id="messages">
+        {% for msg in messages %}
+            <p>{{msg}}</p>
+        {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- CAS/login valid -->
+{% if username %}
+        <form method="GET" action="{{url_for('cas.logout')}}">
+            <button>logout {{username}}</button>
+        </form>
+   <p>CAS username: {{username}}</p>
+   <p>CAS attributes:</p>
+   <ul>
+        {% for key,val in cas_attributes.items() %}
+            <li>{{key}} &rArr; {{val}}</li>
+        {% endfor %}
+   </ul>
+
+{% else %}
+   <form method="GET" action="{{url_for('cas.login')}}">
+        <button>login</button>
+   </form>
+{% endif %}   
+
+{% block main_content %}
+<h1>Welcome!</h1>
+{% endblock %}
+
+</body>
+</html>

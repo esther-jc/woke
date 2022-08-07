@@ -1,0 +1,81 @@
+<!-- general form to submit a review on course -->
+{% extends "base.html" %}
+
+{% block main_content %}
+
+<h1>Course Review Form</h1>
+
+<p class="reviewdir">Submit a review on how you felt about your course. <br>
+    <em>Note: All fields are required except for professor name.</em>
+    </p><br>
+
+<!-- form content -->
+<form id="reviewform" method="POST" action="{{url_for('submit_review')}}" 
+    enctype ="multipart/form-data">
+
+    <label for="courseID">Course ID (i.e. DEPT123):</label>
+    <input required type="text" id="courseID" name="courseID" maxlength="7"
+            placeholder="CS304">
+    <br><br>
+
+    <label for="hours">Hours per week:</label>
+    <input required id="hours" type="number" name="hours" min="0" max="168">
+    <br><br>
+
+    <span>Attendance:</span>
+        <input required type="radio" id="attendMand" name="attend" 
+            value="mandatory">
+        <label class="attendance" for="attendMand">mandatory</label>
+
+        <input required type="radio" id="attendNot" name="attend" 
+            value="not mandatory">
+        <label class="attendance" for="attendNot">not mandatory</label>
+    <br><br>
+
+    <span>Remote?:</span>
+        <input required type="radio" id="remoteY" name="remote" value="yes">
+        <label class="remote" for="remoteY">yes</label>
+
+        <input required type="radio" id="remoteN" name="remote" value="no">
+        <label class="remote" for="remoteN">no</label>
+    <br><br>
+
+    <fieldset>
+        <legend class="ratings">Ratings on...</legend>
+        <p>(1 is least, 5 is most)</p>
+        <!-- changing slider value referenced from stack overflow and 
+            adjusted for our needs-->
+        
+        <label for="fun">how fun?</label>
+        <input type="range" id="fun" name="fun" min="1" max="5" 
+        oninput="sliderNum1.value = this.value">
+        <output id="sliderNum1">3</output>
+        <br><br>
+
+        <label for="relevance">relevance to real world applications</label>
+        <input type="range" id="relevance" name="relevance" min="1" max="5" 
+        oninput="sliderNum2.value = this.value">
+        <output id="sliderNum2">3</output>
+        <br><br>
+    </fieldset>
+    <br>
+
+    <label for="prof">Professor (First and Last):</label>
+    <input type="text" id="prof" name="prof" maxlength="30" 
+        placeholder="Scott Anderson">
+    <br><br>
+
+    <label for="textInput">What was your opinion on the course?</label><br><br>
+    <textarea required id="textInput" name="textInput" rows="6" cols="50" 
+    placeholder="I liked/disliked the course, because..."></textarea>
+    <br><br>
+
+    <label>Syllabus: <input type="file" name="syllabus"></label>
+
+    <br><br>
+    <div style= "text-align: center;">
+        <input class = 'submitButton' type="submit" name="submit" value="submit">
+    </div>
+</form>
+
+{% endblock %}

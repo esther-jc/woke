@@ -1,0 +1,1932 @@
+====================== app.py =====================
+# app.py for WOKE webpage to view, submit, edit reviews on Wellesley
+# courses after authenticated
+from flask import (Flask, render_template, make_response, url_for, request,
+                   redirect, flash, session, send_from_directory, jsonify)
+from werkzeug.utils import secure_filename
+from flask_cas import CAS
+
+app = Flask(__name__)
+
+
+import cs304dbi as dbi
+import woke
+import random, os, sys
+
+app.secret_key = ''.join([ random.choice(('ABCDEFGHIJKLMNOPQRSTUVXYZ' +
+                                          'abcdefghijklmnopqrstuvxyz' +
+                                          '0123456789'))
+                           for i in range(20) ])
+
+# This gets us better error messages for certain common request errors
+app.config['TRAP_BAD_REQUEST_ERRORS'] = True
+
+# for file upload
+app.config['UPLOADS'] = 'uploads'
+app.config['MAX_CONTENT_LENGTH'] = 1*1024*1024 # 1 MB
+
+# For CAS
+CAS(app)
+
+app.config['CAS_SERVER'] = 'https://login.wellesley.edu:443'
+app.config['CAS_LOGIN_ROUTE'] = '/module.php/casserver/cas.php/login'
+app.config['CAS_LOGOUT_ROUTE'] = '/module.php/casserver/cas.php/logout'
+app.config['CAS_VALIDATE_ROUTE'] = '/module.php/casserver/serviceValidate.php'
+
+app.config['CAS_AFTER_LOGIN'] = 'logged_in'
+app.config['CAS_AFTER_LOGOUT'] = 'after_logout'      # doesn't work :-(
+
+#provides login button
+@app.route('/')
+def pre_login():
+    '''Returns rendered pre login template for user to go through CAS
+    to access WOKE'''
+    return render_template('pre_login.html')
+
+@app.route('/logged_in/')
+def logged_in():
+    '''Returns redirect to pre login if not logged in,
+    or to main welcome page to access WOKE if log in successful'''
+    if 'CAS_USERNAME'  not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login'))
+    flash('successfully logged in!')
+    username = session['CAS_USERNAME']
+    conn = dbi.connect()
+    #add username to db
+    woke.insert_usn(conn, username)
+    return redirect(url_for('index'))
+
+@app.route('/welcome/')
+def index():
+    '''Returns redirect to pre login if not logged in,
+    or main welcome page if valid'''
+    #must login
+    if 'CAS_USERNAME'  not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login'))
+    conn = dbi.connect()
+    randCourse = woke.getRandomCourse(conn)
+    return render_template('main.html',
+                            randomId = randCourse['cId'],
+                            randomName = randCourse['course_name'],
+                            page_title='Welcome to WOKE')
+
+@app.route('/submitreview/', methods=['GET','POST'])
+def submit_review():
+    '''Returns redirect to pre login if not logged in,
+    or general form to submit review if get method,
+    or submits review to database and redirects to the 
+    individual course page of the submitted review if post'''
+    if 'CAS_USERNAME'  not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login'))
+    username = session["CAS_USERNAME"]
+
+    # get general review form
+    if request.method == 'GET':
+        return render_template('genform.html',
+                               page_title="Course Review Form")
+    else: #post/submit form
+        try:
+            conn = dbi.connect()
+            cid = request.form.get('courseID')
+            if not woke.search_is_cId(conn,cid):
+                flash("invalid course ID")
+                return render_template('genform.html',
+                                page_title="Course Review Form")
+            hours = int(request.form.get('hours'))
+            attend = request.form.get('attend')
+            remote = request.form.get('remote')
+            fun = int(request.form.get('fun'))
+            relev = int(request.form.get('relevance'))
+            prof = request.form.get('prof')
+            writeUp = request.form.get('textInput')
+
+            #insert all non-file info into db
+            rid_dict = woke.insert(conn,cid,hours,remote,attend,fun,prof,
+            relev, writeUp, username)
+            
+            #get the rId of that review that was just inserted
+            curr_rid = rid_dict['rId']
+            
+            #save uploaded file to that same review
+            f = request.files['syllabus']
+            user_filename = f.filename
+            ext = user_filename.split('.')[-1]
+            filename = secure_filename('{}.{}'.format(curr_rid,ext))
+            pathname = os.path.join(app.config['UPLOADS'],filename)
+            f.save(pathname)
+            
+            woke.insert_syllabus(conn, curr_rid, filename)
+
+            flash('Review Submitted!')
+            #redirects to the course page
+            return redirect(url_for('course',cid=cid))
+            flash('Upload successful')
+                                   
+        except Exception as err:
+            flash('Upload failed {why}'.format(why=err))
+            return render_template('genform.html',
+            page_title="Course Review Form")
+
+@app.route('/syllabus/<rid>')
+def download(rid):
+    conn = dbi.connect()
+    row = woke.get_filename(conn, rid)
+
+    if row['syllabus'] is None:
+        flash('No syllabus for {}'.format(rid))
+        review_info = woke.get_review_info(conn, rid)
+
+        cId = review_info['cId']
+        return redirect(url_for('course', cid = cId))
+
+    return send_from_directory(app.config['UPLOADS'],row['syllabus'])
+
+@app.route('/course/<cid>/', methods=["GET", "POST"])
+def course(cid):
+    '''Returns redirect to pre login if not logged in,
+    or renders individual course page if get method,
+    or sorts reviews by criteria if post method (w/rendered template)'''
+    if 'CAS_USERNAME'  not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login'))
+    cid = cid.upper()
+    conn = dbi.connect()
+    course_details = woke.get_course_info(conn, cid)
+    course_reviews = []
+    # sort reviews by criteria
+    if request.method == "POST":
+        sort_by = request.form.get("sort_by")
+        if sort_by == "how fun":
+            course_reviews = woke.reviews_sort_fun(conn, cid)
+        elif sort_by == "how recent":
+            course_reviews = woke.reviews_sort_recent(conn, cid)
+        elif sort_by == "how relevant":
+            course_reviews = woke.reviews_sort_relevant(conn, cid)
+    else: # get method
+        course_reviews = woke.get_course_reviews(conn, cid)
+    #individual course page display
+    #overall averages collected from reviews on course
+    avgHrs = (woke.overallCourseAvgs(conn,cid))['avg(hours)']
+    avgFun = (woke.overallCourseAvgs(conn,cid))['avg(how_fun)']
+    avgRel = (woke.overallCourseAvgs(conn,cid))['avg(relevance)']
+    if avgHrs:
+        avgHrs = round(avgHrs,1)
+    if avgFun:
+        avgFun = round(avgFun,1)
+    if avgRel:
+        avgRel = round(avgRel,1)
+
+    return render_template('course.html',
+        page_title=str("Course - " + course_details['cId']),
+        course_details= course_details,
+        course_reviews= course_reviews,
+        hrswk = avgHrs,
+        howfun = avgFun,
+        relrealworld = avgRel)
+
+@app.route('/departments/')
+def all_departments():
+    '''Returns redirect to pre login if not logged in,
+    or shows all departments/renders the template'''
+    if 'CAS_USERNAME'  not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login')) 
+    conn = dbi.connect()
+    depts = woke.get_all_departments(conn)
+    return render_template('alldepartments.html', 
+    page_title = "Departments", departments = depts)
+
+@app.route('/updatereview/', methods=['GET','POST'])
+def update_review():
+    '''Returns redirect to pre login if not logged in,
+    or if get method redirects to see all reviews
+    or if post option to update/delete review, then displays updated all
+    my reviews'''
+    if 'CAS_USERNAME' not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login'))
+    username = session['CAS_USERNAME']
+    if request.method == 'GET':
+        return redirect(url_for('my_reviews'))
+    else:
+        conn = dbi.connect()
+        button = request.form['submit']
+        rid = request.form.get('rId')
+        if button == 'Update':
+            cid = request.form.get('courseID')
+            hours = int(request.form.get('hours'))
+            attend = request.form.get('attend')
+            remote = request.form.get('remote')
+            fun = int(request.form.get('fun'))
+            relev = int(request.form.get('relevance'))
+            prof = request.form.get('prof')
+            writeUp = request.form.get('textInput')
+
+            #update review 
+            woke.update(conn,rid,cid,hours,remote,attend,fun,prof,
+            relev, writeUp)
+            flash('Review Updated!')
+
+        if button == 'Delete':
+            woke.delete(conn, rid)
+            flash('Review Deleted!')
+        
+        return redirect(url_for('my_reviews'))
+
+#shows only logged in user's reviews
+@app.route('/myreviews/', methods=["GET", "POST"])
+def my_reviews():
+    '''Returns redirect to pre login if not logged in,
+    or renders all of my reviews template if get
+    or renders update form if post (clicked edit button on review)'''
+    if 'CAS_USERNAME'  not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login'))
+    username = session['CAS_USERNAME']
+    
+    conn = dbi.connect()
+    if request.method == 'GET':
+        myrevs = woke.get_my_reviews(conn, username)
+        return render_template('myreviews.html', 
+            page_title='My Reviews', my_reviews = myrevs)
+    else: #post to update review
+        rId = request.form['rId']
+        
+        #get review information to pass into template
+        review = woke.get_review_info(conn, rId)
+
+        cid = review['cId']
+        hours = review['hours']
+        #attend and remote are yes/no to populate radio buttons accordingly
+        attend = review['attendance']
+        remote = review['remote']
+        fun = review['how_fun']
+        relev = review['relevance']
+        prof = review['professor']
+        writeUp = review['write_up']
+
+        #return prepopulated update page
+        return render_template('update.html', page_title = 'Update', 
+                    rId = rId, cId = cid, hours = hours, 
+                    amode = attend, rmode = remote, fun = fun, 
+                    relevance = relev, professor = prof, text = writeUp)
+
+
+@app.route('/voting/', methods=['POST'])
+def vote():
+    '''Increments or decrements the global counters via an Ajax request. 
+        Response is both counter values.'''
+    if 'CAS_USERNAME'  not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login'))
+    data = request.form
+    conn = dbi.connect()
+    rid = data.get('rid')
+    
+    #insert vote into votes table
+    username = session['CAS_USERNAME']     
+    if data.get('up'):
+        upordown = True    #true for upvote, false for down
+    else:
+        upordown = False
+
+    #if already voted, voted = false
+    voted = woke.insert_vote(conn, rid, username, upordown)
+
+    #if vote was updated, update total vote count
+    if voted:
+        totalup = woke.update_total_votes(conn, rid, upordown)
+    
+    #retrieve updated vote count and send back to browser
+    votecount = woke.get_total_votes(conn, rid)
+    upvotes = votecount['upvotes']
+    downvotes = votecount['downvotes']
+    return jsonify({'rid': rid, 'up': upvotes, 'down': downvotes})
+
+@app.route('/department/<department>/', methods = ['GET', 'POST'])
+def courses_in_dept(department):
+    '''Returns redirect to pre login if not logged in,
+    or renders all courses in department template'''
+    if 'CAS_USERNAME'  not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login'))
+    conn = dbi.connect()
+    classes = []
+    if request.method == "POST":
+        sort_by = request.form.get("sort_by")
+        classes = woke.sort_courses_indept_by(conn, department, sort_by)
+    else:
+        classes = woke.get_courses_in_dept(conn, department)
+    return render_template('department.html', classList = classes,
+            page_title = str(department) + "Department")
+
+@app.route('/search/', methods=["GET"])
+def search():
+    '''Returns redirect to pre login if not logged in,
+    or searches based on input for matching/like course ID
+    or course name'''
+    if 'CAS_USERNAME'  not in session:
+        flash("Please log in first!")
+        return redirect(url_for('pre_login'))
+    
+    #retrieve class that matches query
+    conn = dbi.connect()
+    classList = woke.search_like_name(conn, request.args['search'])
+
+    #flashes if there are no matches
+    if len(classList) == 0:
+        flash("No such course! :-(")
+        randCourse = woke.getRandomCourse(conn)
+        return render_template("main.html",
+                            randomId = randCourse['cId'],
+                            randomName = randCourse['course_name'],
+                            page_title="Welcome to WOKE")
+    
+    #if only one course, go directly to course page
+    elif len(classList) == 1:
+        return redirect(url_for('course', cid = classList[0]['cId']))#?
+    else:
+        #else go the searchdata and list all applicable classes
+        return render_template('searchdata.html',
+                                classList=classList, page_title="Search Result")
+        
+@app.before_first_request
+def init_db():
+    dbi.cache_cnf()
+    dbi.use('woke_db')
+
+if __name__ == '__main__':
+    import sys, os
+    if len(sys.argv) > 1:
+        # arg, if any, is the desired port number
+        port = int(sys.argv[1])
+        assert(port>1024)
+    else:
+        port = os.getuid()
+    app.debug = True
+    app.run('0.0.0.0',port)
+====================== cs304dbi.py =====================
+'''Module to read MySQL database credentials and access databases as the
+MySQL user.
+
+This module is designed to work with the pymysql package and make it
+easier to read the database credentials from the standard ~/.my.cnf file,
+or any file of similar format.  Doing so avoids putting those credentials
+in the source code and removes that dependency from the code.
+
+EXAMPLE USAGE
+
+import cs304dbi as dbi
+
+cnf = dbi.cache_cnf(db='some_db')
+conn = dbi.connect()
+curs = dbi.cursor(conn)                    # or dbi.dictCursor(conn) 
+                                           # or dbi.dict_cursor(conn)
+
+curs.execute('select * from table where id = %s',[some_id])
+vals = curs.fetchall()
+curs.execute('insert into table values(%s,%s)',[col1,col2])
+conn.commit()                              # necessary after insert/update/delete
+
+USAGE DETAIL
+
+import cs304dbi as dbi
+
+Use one of the following to read the credentials (DSN) file
+
+dsn = dbi.read_cnf(db=some_db)
+dsn = dbi.read_cnf('~/.my.cnf',db=some_db)
+dsn = dbi.read_cnf('/path/to/any/dsn_file',db=some_db)
+
+Or use dbi.cache_cnf() in the same way.
+
+Your credentials file typically specify a database to connect to in
+the [mysql] section. You can optionally assign or modify that value in
+either of these functions (which will apply to subsequent connections)
+or use the select_db() method on the connection, like this:
+
+dsn['database'] = 'wmdb'     # the database we want to connect to every time
+
+or
+
+conn = dbi.connect(dsn)
+conn.select_db('wmdb')       # switch to this database for this connection
+
+Use the DSN (credentials dictionary) to connect to the database. From here
+on, mostly use the PyMySQL API.
+
+conn = dbi.connect(dsn)
+conn.select_db('wmdb')
+curs = db.dict_cursor(conn)
+curs.execute('select name,birthdate from person')
+curs.execute('select name,birthdate from person where name like %s',
+             ['%george%'])
+curs.fetchall()
+curs.fetchone()
+
+curs.execute('insert into person values(%s,%s)',[123,'George Clooney'])
+conn.commit()
+
+PROVISOS and CONFIGURATION
+
+The database connection is set to auto_commit(), but you can modify that
+by using the conn.autocommit() method on the database connection:
+
+conn=connect()
+conn.autocommit(False)
+
+INSTALLATION
+
+It's usually easiest to install this module into your virtual
+environment. Here's how to do that: 
+
+(1) activate your virtual environment, and 
+(2) execute the following Unix command:
+
+cp ~cs304/pub/downloads/pymysql/cs304dbi.py $VIRTUAL_ENV/lib/python3.6/site-packages/
+
+REPL
+
+If you load this file using the Python REPL, you can get a read-eval-print
+loop to the database with the repl() function:
+
+repl(conn)
+dbi> select user()
+1
+('cs304guest@localhost')
+dbi> select database()
+1
+('wmdb')
+dbi> select * from person limit 10;
+10
+(0, 'Alan Smithee', None, 1)
+(1, 'Fred Astaire', datetime.date(1899, 5, 10), 167)
+(2, 'Lauren Bacall', datetime.date(1924, 9, 16), 1207)
+(3, 'Brigitte Bardot', datetime.date(1934, 9, 28), 1)
+(4, 'John Belushi', datetime.date(1949, 3, 5), None)
+(5, 'Ingmar Bergman', datetime.date(1918, 7, 14), 1)
+(6, 'Ingrid Bergman', datetime.date(1915, 8, 29), 1)
+(7, 'Humphrey Bogart', datetime.date(1899, 12, 25), 1247)
+(8, 'Marlon Brando', datetime.date(1924, 4, 3), 1)
+(9, 'Richard Burton', datetime.date(1925, 11, 10), 64)
+dbi> quit
+>>>
+
+'''
+
+import pymysql
+import configparser
+import os
+
+DEBUG = False
+
+# got this code from pymsql/optionfile.py
+
+class Parser(configparser.RawConfigParser):
+
+    def __remove_quotes(self, value):
+        quotes = ["'", "\""]
+        for quote in quotes:
+            if len(value) >= 2 and value[0] == value[-1] == quote:
+                return value[1:-1]
+        return value
+
+    def get(self, section, option):
+        value = configparser.RawConfigParser.get(self, section, option)
+        return self.__remove_quotes(value)
+
+def read_cnf(cnf_file='~/.my.cnf',db=None):
+    '''Read a file formatted like ~/.my.cnf file; defaulting to that
+    file. Return a dictionary with the necessary information to connect to
+    a database. See the connect() function. If 'db' given, replace the 
+    value from the cnf_file. '''
+    abs_cnf_file = os.path.expanduser(cnf_file)
+    if not os.path.exists(abs_cnf_file):
+        raise FileNotFoundError(cnf_file)
+
+    # this code is from pymysql/connections.py
+    read_default_group = "client"
+    cfg = Parser()
+    cfg.read(abs_cnf_file)
+
+    def _config(key):
+        return cfg.get(read_default_group, key)
+
+    user = _config("user")
+    password = _config("password")
+    host = _config("host")
+    # on Tempest, we put the database in the mysql group
+    database = cfg.get("mysql","database")
+    if db is not None:
+        database = db
+    if DEBUG:
+        print('read_cnf: {} {}'.format(user,database))
+    return {'user': user,
+            'password': password,
+            'host': host,
+            'database': database}
+
+DSN_CACHE = None
+
+def cache_cnf(cnf_file='~/.my.cnf',db=None):
+    '''Like read_cnf but reads the CNF file only once and caches the results'''
+    global DSN_CACHE
+    if DSN_CACHE is None:
+        DSN_CACHE = read_cnf(cnf_file,db=db)
+    return DSN_CACHE
+
+def use(database):
+    '''Like the 'use' statement, but modifies the cached cnf. Then connect()'''
+    if DSN_CACHE is None:
+        raise Exception('You have to invoke cache_cnf first')
+    DSN_CACHE['database'] = database
+
+def connect(dsn=None):
+    '''Returns a new database connection given the dsn (a dictionary). The
+default is to use cache_cnf('~/.my.cnf')
+
+    The database connection is not set to automatically commit.
+
+    '''
+    if dsn is None:
+        dsn = cache_cnf('~/.my.cnf')
+    check_DSN(dsn)
+    try:
+        # have no idea why this unix_socket thing is necessary, but
+        # only for deployed apps, not in development mode
+        # see stackoverflow.com/questions/6885164/pymysql-cant-connect-to-mysql-on-localhost
+        conn = pymysql.connect( use_unicode=True,
+                                autocommit=False,
+                                charset='utf8',
+                                unix_socket='/var/lib/mysql/mysql.sock',
+                                **dsn )
+    except pymysql.Error as e:
+        print("Couldn't connect to database. PyMySQL error {}: {}"
+              .format(e.args[0], e.args[1]))
+        raise
+    return conn
+
+def check_DSN(dsn):
+    '''Raises a comprehensible error message if the DSN is missing
+    some necessary info'''
+    for key in ('host', 'user', 'password', 'database' ):
+        if not key in dsn:
+            raise KeyError('''DSN lacks necessary '{k}' key'''.format(k=key))
+    return True
+
+def cache_select_db(db_name):
+    '''Stores given db_name in DSN, so that subsequent connections use it.'''
+    DSN_CACHE['database'] = db_name
+    return DSN_CACHE
+
+def select_db(conn,db):
+    '''This function isn't necessary; just use the select_db() method
+on the connection.'''
+    conn.select_db(db)
+
+def cursor(conn):
+    '''Returns a cursor where rows are represented as tuples.'''
+    return conn.cursor()
+
+# for those who prefer snake_case
+
+def dict_cursor(conn):
+    '''Returns a cursor where rows are represented as dictionaries.'''
+    return conn.cursor(pymysql.cursors.DictCursor)
+
+# for those who prefer camelCase
+
+def dictCursor(conn):
+    '''Returns a cursor where rows are represented as dictionaries.'''
+    return conn.cursor(pymysql.cursors.DictCursor)
+
+## ================================================================
+## testing and help functions
+
+def usage():
+    '''Prints a usage message.'''
+    print('''How to use the cs304dbi python module:
+
+''')
+
+def repl(conn):
+    '''Read SQL statements, Execute them, and print the results. Use 'quit' to quit.'''
+    curs = cursor(conn)
+    while True:
+        expr = input('dbi> ')
+        if expr == 'quit':
+            break
+        val = curs.execute(expr)
+        print(val)
+        for row in curs.fetchall():
+            print(row)
+
+def _testing_changed_cache(cnf_file):
+    '''Testing that changing the db in the cache changes future connections'''
+    # checking modification of DSN. But students can't switch to scottdb, so
+    # this is just for scott
+    scottdsn = cache_cnf(cnf_file)
+    # we will use scottdb from now on
+    scottdsn['database'] = 'scottdb'
+    conn2 = connect()           # don't even have to supply it as an argment
+    curs2 = cursor(conn2)
+    curs2.execute('select database()')
+    db = curs2.fetchone()[0]
+    if db == 'scottdb':
+        print('Successfully changed the database to scottdb')
+    else:
+        raise Error('did not successfully change database')
+    return conn2
+
+def _testing_commit(cnf_file):
+    '''For Scott to test the behavior of commit()'''
+    def drevil(should_be_there):
+        conn = connect()
+        curs = conn.cursor()
+        curs.execute('select database()')
+        db = curs.fetchone()[0]
+        if db != 'scottdb':
+            raise Exception('did not connect to scottdb')
+        curs.execute('select name from person where nm = 666')
+        row = curs.fetchone()
+        name = None if row is None else row[0]
+        if should_be_there and name is None:
+            raise Exception('name is not there and it should be there')
+        else:
+            print('name is correctly there')
+        if not should_be_there and name is not None:
+            raise Exception('name is there and it should not be there')
+        else:
+            print('name is correctly not there')
+
+    # series of checks about behavior of commit
+    conn2 = _testing_changed_cache(cnf_file)
+    curs2 = conn2.cursor()
+    # set up by removing dr evil
+    curs2.execute('delete from person where nm = 666')
+    conn2.commit()
+    # it should not be there
+    drevil(False)
+
+    # since autocommit is false, this won't stick
+    curs2.execute('''insert into person(nm,name) values(666, 'dr evil')
+                     on duplicate key update name='dr evil' ''')
+    drevil(False)
+
+    # now, commit the insert/update in connection 2
+    conn2.commit()
+    drevil(True)
+
+    # clean up by removing dr evil
+    curs2.execute('delete from person where nm = 666')
+    conn2.commit()
+    # last check, to make sure it's gone
+    drevil(False)
+
+
+if __name__ == '__main__':
+    print('starting test code')
+    import sys
+    import os
+    if len(sys.argv) < 2:
+        print('''Usage: {cmd} cnf_file
+test this module by giving the name of a cnf_file on the command line'''
+              .format(cmd=sys.argv[0]))
+        sys.exit(1)
+    cnf_file = sys.argv[1]
+    DSN = cache_cnf(cnf_file)
+    print('Your DSN / CNF file should connect you as user {}@{} to database {}'
+          .format(DSN['user'],DSN['host'],DSN['database']))
+    conn = connect(DSN)
+    print('successfully connected')
+    DSN = cache_cnf(cnf_file,db='wmdb')
+    print('Override DB to be wmdb')
+    conn = connect(DSN)
+    print('successfully connected')
+    print('switching to wmdb')
+    conn.select_db('wmdb')
+    curs = cursor(conn)
+    curs.execute('select user() as user, database() as db')
+    row = curs.fetchone()
+    print('connected to {db} as {user}'
+          .format(db=row[1],user=row[0]))
+    curs = dict_cursor(conn)
+    # example of a simple query
+    curs.execute('select nm,name,birthdate from person limit 3')
+    print('first three people')
+    for row in curs.fetchall():
+        print(row)
+    # example of a prepared query
+    curs.execute('select nm,name,birthdate from person where name like %s',
+                 ['%george%'])
+    print('names like george')
+    for row in curs.fetchall():
+        print(row)
+
+    # the following is just for scott (1942 is the cs304 course account)
+    if os.getuid() == 1942:
+        print('testing code for Scott/ CS304 course account')
+        _testing_commit(cnf_file)
+
+====================== woke.py =====================
+# woke.py contains many helper functions to be used in app.py
+
+import cs304dbi as dbi
+import pymysql #for integtrity error
+import sys
+from datetime import datetime
+
+# ==========================================================
+# The functions that do most of the work.
+
+def now():
+    '''Returns a string for the current day and time.'''
+    now = datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M:%S")
+
+def insert(conn,cid,hours,remote,attend,fun,professor,relevance,
+text, username):
+    '''inserts review info from student into database'''
+    curs = dbi.dict_cursor(conn)
+    
+    curs.execute('''insert into review (cId,hours,remote,
+                attendance,how_fun,professor,relevance,write_up,username,
+                date_submitted, upvotes, downvotes)
+                values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, %s, 0, 0)''',
+                [cid,hours,remote,attend,fun,professor,relevance,
+                text,username, str(now())])
+    conn.commit()
+    #return rid of the last inserted review (last_insert_id wasn't working)
+    curs.execute('''select rId from review where cId = %s and hours=%s 
+                and remote=%s and attendance=%s and how_fun=%s and 
+                professor=%s and relevance=%s and write_up=%s and username=%s
+                and upvotes=0 and downvotes=0''',
+                [cid,hours,remote,attend,fun,professor,relevance,
+                text,username])
+    print('here')
+    return curs.fetchone()
+
+def insert_syllabus(conn,rid,syllabus):
+    '''inserts syllabus filename of certain rid 
+    into review table'''
+    curs = dbi.dict_cursor(conn)
+    
+    nr = curs.execute('''update review
+                    set syllabus = %s where rid = %s''',
+                [syllabus, rid])
+    conn.commit()
+    return nr
+
+def get_filename(conn, rid):
+    '''gets filename of syllabus of review with 
+    specified rid from review table'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute(
+        '''select syllabus from review where rId = %s''',
+        [rid])
+    row = curs.fetchone()
+    return row
+
+def overallCourseAvgs(conn,cId):
+    '''Gathers overall course info to display on top of individual
+    course page, i.e. hours per week, how fun, relevance to real
+    world'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select avg(hours), avg(how_fun), avg(relevance) 
+                    from review where `cId` = %s''', [cId])
+    return curs.fetchone()
+
+def getRandomCourse(conn):
+    '''Returns random course to display on welcome page each time'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select cId,course_name from course 
+                    order by rand() limit 1''')
+    return curs.fetchone()
+
+def get_course_reviews(conn, cId):
+    '''Returns the information for the course of id cId
+        and all the reviews for it.'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('select * from review where `cId` = %s', [cId])
+    return curs.fetchall()
+
+def get_course_info(conn, cId):
+    '''Returns course name, department, and id'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('select * from course where `cId`=%s', [cId])
+    return curs.fetchall()[0]
+
+def reviews_sort_fun(conn, cId):
+    '''Returns reviews for course cId sorted by how fun the course
+        is rated by that review (the most fun to least)'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select * from review where `cId` = %s 
+                    order by how_fun desc''', [cId])
+    return curs.fetchall()
+
+def reviews_sort_recent(conn, cId):
+    '''Returns reviews for course cId sorted by how recent the reviews are
+        (the most recent to least)'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select * from review where `cId` = %s 
+                    order by date_submitted desc''', [cId])
+    return curs.fetchall()
+
+def reviews_sort_relevant(conn, cId):
+    '''Returns reviews for course cId sorted by how relevant the course
+        is rated by that review
+        (the most relevant to least)'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select * from review where `cId` = %s 
+                    order by relevance desc''', [cId])
+    return curs.fetchall()
+
+def insert_usn(conn,usn):
+    '''Insert username into student table. if already inserted,
+        returns false (does nothing)'''
+    curs = conn.cursor()
+    try: #try to insert into student table
+        nr = curs.execute('''insert into student(username)
+         values (%s)''',[usn])
+        conn.commit()
+        return nr == 1
+    except pymysql.IntegrityError as err: #if already inserted, do nothing
+        return False
+
+def get_all_departments(conn):
+    '''Returns all distinct departments as a list of dictionaries'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('select distinct department from course')
+    return curs.fetchall()
+
+def get_review_info(conn, rId):
+    '''Returns review contents using review id in
+    review table, as a list of dictionaries.'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('select * from review where rId = %s', [rId])
+    return curs.fetchone()
+
+def update(conn,rId,cid,hours,remote,attend,fun,prof,
+        relev, writeUp):
+    '''Returns the name and birthdate of all the entries in
+    the person table, as a list of dictionaries.'''
+    curs = dbi.dict_cursor(conn)
+    nr = curs.execute('''update review 
+        set cid = %s, hours = %s, attendance = %s, remote = %s, 
+        how_fun = %s, relevance = %s, 
+        professor = %s, write_up = %s, date_submitted = %s 
+        where rId = %s''', 
+        [cid, hours, attend, remote, fun, relev, prof, writeUp,
+        str(now()), rId])
+    conn.commit()
+    return nr
+
+def delete(conn, rid):
+    '''Deletes review from review table with 
+    matching review id.'''
+    curs = dbi.dict_cursor(conn)
+    nr = curs.execute('delete from review where rId = %s', [rid])
+    conn.commit()
+    return nr
+
+def get_my_reviews(conn, usn):
+    '''Returns all reviews for logged in user in
+    the review table, as a list of dictionaries.'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('select *  from review where username = %s', [usn])
+    return curs.fetchall()
+
+def insert_vote(conn,rid,usn,upordown):
+    '''Insert vote into votes table;
+        Upordown = True for upvote, false for downvote'''
+    curs = conn.cursor()
+    try: #try to insert into vote table
+        nr = curs.execute('''insert into votes(rId, username, updown)
+                        values (%s, %s, %s)''',[rid, usn, upordown])
+        conn.commit()
+        return nr == 1
+    except pymysql.IntegrityError as err: #if already inserted, do nothing
+        return False
+
+def update_total_votes(conn, rid, upordown):
+    '''Updates total votes of up/down vote'''
+    curs = conn.cursor()
+    if upordown: #if upvote, increment upvotes
+        #replaces null values with 0
+        nr = curs.execute('''update review 
+            set upvotes= upvotes + 1 
+            where rId = %s''', [rid])
+        conn.commit()
+    else: #if downvote, increment downvotes
+        #replaces null values with 0
+        nr = curs.execute('''update review 
+            set downvotes= downvotes + 1 
+            where rId = %s''', [rid])
+        conn.commit()
+    return nr
+
+def get_total_votes(conn, rId):
+    '''Returns review votes total using review id in
+    review table, as a dictionary'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select upvotes, downvotes from review 
+        where rId = %s''', [rId])
+    return curs.fetchone()
+
+def get_courses_in_dept(conn, department):
+    '''Returns the cId, course_name, department of all the 
+    entries in the course table, as a list of dictionaries.'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select cId, course_name, department 
+    from course where department = %s''', [department])
+    return curs.fetchall()
+
+def search_is_cId(conn, string):
+    '''Returns the cId that exactly matches the string, 
+    if it exists.'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select cId from course
+                            where cId = %s ''', 
+                        [string])
+    return curs.fetchone()
+
+def search_like_name(conn, string):
+    '''Returns the cId, course_name, department of all the matching
+    entries in the course table, as a list of dictionaries.'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select cId, course_name, department
+                            from course
+                            where course_name like %s or cid like %s''', 
+                        ['%' + string + '%', '%' + string + '%'])
+    return curs.fetchall()
+
+""" def get_last_rid(conn):
+    '''Returns the last rid as a dictionaries.'''
+    curs = dbi.dict_cursor(conn)
+    curs.execute('''select last_insert_id()''')
+    return curs.fetchone() """
+
+def sort_courses_indept_by(conn, department, by_what):
+    '''Returns the courses in a department sorted from the
+        most 'by_what' in average to the least 'by_what',
+        where 'by_what' can be either 'fun' or 
+        'relevant'. If 'by_what' is something else, then
+        return None'''
+    curs = dbi.dict_cursor(conn)
+    courseList = None
+    if by_what == "fun":
+        curs.execute('''select course.cId, course.course_name, 
+        course.department, T.avg_fun from course left join 
+        (select cId, avg(how_fun) as 'avg_fun' from review group by cId 
+                order by avg(how_fun) desc) as T 
+        using (cId) where department = %s order by T.avg_fun desc''', [department])
+        courseList = curs.fetchall()
+    elif by_what == "relevant":
+        curs.execute('''select course.cId, course.course_name, 
+        course.department, T.avg_relevant from course left join 
+        (select cId, avg(relevance) as 'avg_relevant' from review group by cId 
+                order by avg(relevance) desc) as T 
+        using (cId) where department = %s order by T.avg_relevant desc''', [department])
+        courseList = curs.fetchall()
+    return courseList
+
+# ==========================================================
+# This starts the ball rolling, *if* the file is run as a
+# script, rather than just being imported.    
+
+if __name__ == '__main__':
+    dbi.cache_cnf()   # defaults to ~/.my.cnf
+    dbi.use('woke_db')
+    conn = dbi.connect()
+    # print(sort_courses_indept_by(conn, "CS", "fun"))
+    
+    
+====================== creating_tables.sql =====================
+-- makes tables necessary for woke database
+use woke_db;
+
+drop table if exists votes; 
+drop table if exists review;
+drop table if exists course;
+drop table if exists student;
+ 
+create table student (
+    username varchar(10) not null,
+    primary key (username))
+    ENGINE = InnoDB;
+
+create table course (
+    cId varchar(9) not null, 
+    course_name varchar(50),
+    department varchar(4),
+    primary key (cId))
+    ENGINE = InnoDB;
+ 
+create table review (
+    rId int not null auto_increment primary key,
+    cId varchar(7) not null,
+    `hours` tinyint,
+    `remote` enum('yes','no'), 
+    attendance enum('mandatory','not mandatory'), 
+    how_fun tinyint, 
+    professor varchar(30), 
+    relevance tinyint,
+    downvotes tinyint, 
+    upvotes tinyint, 
+    date_submitted date,
+    write_up text,
+    username varchar(10) not null,
+    index (username), 
+    foreign key (username) references student(username) 
+        on update restrict 
+        on delete restrict,
+    index(cId),
+    foreign key (cId) references course (cId) 
+        on update restrict 
+        on delete restrict)
+    engine = InnoDB;
+ 
+create table votes (
+    rId int not null,
+    username varchar(10) not null,
+    updown boolean,
+    primary key (rId, username),
+    index(rId),
+    foreign key (rId) references review (rId)
+        on update restrict
+        on delete restrict,
+    index(username),
+    foreign key(username) references student (username)
+        on update restrict
+        on delete restrict)
+    ENGINE = InnoDB;
+
+    -- add syllabus file name column
+    alter table review add syllabus varchar(50);
+    -- dropped column isbn not needed
+    -- (alter table review drop columnn textbook_isbn;)
+====================== templates/alldepartments.html =====================
+<!-- show list of depts -->
+{% extends "base.html" %}
+
+{% block main_content %}
+<h1>All Departments at Wellesley:</h1>
+
+<!-- the department name and link to its courses -->
+<div id="departments">
+    <ul>
+        {% for dept in departments %}
+        <li id = "depts" >
+            <a class="deptslink" href="{{url_for('courses_in_dept', department = dept.department)}}">
+            {{ dept.department }}</a></li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}
+====================== templates/base.html =====================
+<!doctype html>
+<html lang='en'>
+
+<head>
+  <meta charset='utf-8'>
+  <meta name=author content="">
+  <title>{{ page_title }}</title>
+  <link rel='stylesheet' href="{{url_for('static', filename = 'style.css')}}">
+  {% block head_stuff %}
+  {% endblock %}
+</head>
+
+<body>
+  <!-- flash messages -->
+  {% with messages = get_flashed_messages() %}
+  {% if messages %}
+  <div id="messages">
+    {% for msg in messages %}
+    <p>{{msg}}</p>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endwith %}
+
+  <!-- search box to search courses -->
+  <form id="search" method="GET" action="{{url_for('search')}}">
+    <label for = "searchbar">Search by course ID or course name:</label>
+    <input id = "searchbar" type="text" placeholder="Search..." name="search">
+    <button class = "submitButton" type="submit">submit</button>
+  </form> <br>
+
+  <!-- navigation bar to view depts/courses, view/submit/edit reviews,logout -->
+  <nav>
+    <ul>
+      <li><a href="{{url_for('index')}}">Home</a></li>
+      <li><a href="{{url_for('all_departments')}}">Departments</a></li>
+      <li><a href="{{url_for('submit_review')}}">Submit Review</a></li>
+      <li><a href="{{url_for('my_reviews')}}">My Reviews</a></li>
+      <li><form method="GET" action="{{url_for('cas.logout')}}">
+      <button>Logout</button></form></li>
+    </ul>
+  </nav>
+  <br><br>
+
+  {% block main_content %}
+  {% endblock %}
+
+  <script src="//code.jquery.com/jquery-3.4.1.min.js"></script>
+  {% block end_scripts %}
+  {% endblock %}
+
+  <br><br><br><br><br>
+</body>
+</html>
+====================== templates/course.html =====================
+<!-- shows reviews and details of one particular course -->
+
+{% extends 'base.html' %}
+
+{% block main_content %}
+<h1 class="class_detail" cId="{{course_details['cId']}}">
+    {{course_details['course_name']}}</h1>
+<h2>Department: {{course_details['department']}}</h2>
+<br>
+
+<!-- course overview (i.e. displaying averages collected from reviews) -->
+<div id="overview">
+    <br>
+    <table id="averages">
+        <tr>
+            <th>How Fun</th>
+            <th>Relevance to Real World</th>
+            <th>Hours per week</th>
+        </tr>
+        <tr id="avgNums">
+            <td>{{howfun}}/5</td>
+            <td>{{relrealworld}}/5</td>
+            <td>{{hrswk}} hrs</td>
+        </tr>
+    </table>
+    <br>
+</div>
+<br><br>
+
+<!-- Displaying buttons, to sort reviews for a course by
+        recent, how fun, relevancy  -->
+<table id="sort-by">
+    <tr>
+        <td><p>Sort reviews by :</p></td>
+        <td>
+        <form action="" method="POST">
+            <select name="sort_by" required>
+                <option value="" disabled selected hidden> sort by...</option>
+                <option value="how recent">most to least recent</option>
+                <option value="how fun">most to least fun</option>
+                <option value="how relevant">most to least relevant</option>
+            </select>
+            <input class = 'submitButton' type="submit" value="sort">
+        </form>
+        </td>
+    </tr>
+</table>
+
+<!-- display all reviews for the course -->
+<div id="reviewsForCourse">
+{% for review in course_reviews %}
+<div class="review" funness="{{review['how_fun']}}">
+    <!-- keeping track of how fun for javascript/change color of review -->
+    <p><b>Review {{review['rId']}}</b></p>
+    <table>
+        <tr>
+            <td>Course</td>
+            <td>: {{review['cId']}}</td>
+        </tr>
+        <tr>
+            <td>How Fun</td>
+            <td>: {{review['how_fun']}}</td>
+        </tr>
+        {% if review['hours'] %}
+        <tr>
+            <td>Hours spent per week</td>
+            <td>: {{review['hours']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['remote'] %}
+        <tr>
+            <td>Is it remote</td>
+            <td>: {{review['remote']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['attendance'] %}
+        <tr>
+            <td>Attendance</td>
+            <td>: {{review['attendance']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['professor'] %}
+        <tr>
+            <td>Professor</td>
+            <td>: {{review['professor']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['relevance'] %}
+        <tr>
+            <td>Relevance</td>
+            <td>: {{review['relevance']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['date_submitted'] %}
+        <tr>
+            <td>Submitted on</td>
+            <td>: {{review['date_submitted']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['username'] %}
+        <tr>
+            <td>Submitted by</td>
+            <td>: {{review['username']}}</td>
+        </tr>
+        {% endif %}
+        <tr>
+            <td>Review</td>
+            <td>: {{review['write_up']}}</td>
+        </tr>
+        {% if review['syllabus'] %}
+        <tr>
+            <td>Syllabus</td>
+            <td>:<a href="{{ url_for('download', rid=review['rId']) }}"> Download</a></td>
+        </tr>
+        {% endif %}
+        <!-- up and down votes on review -->
+        <tr class = "thumbs">
+            <td>
+                <button class="thumb_up" value="{{review['rId']}}">
+                    &#x1F44D;</button>
+                <span class="up_votes" data-rid="{{review['rId']}}">
+                    {{review['upvotes']}}</span>
+                <button class="thumb_down" value="{{review['rId']}}">
+                    &#x1F44E;</button>
+                <span class="down_votes" data-rid="{{review['rId']}}">
+                    {{review['downvotes']}}</span>
+            </td>
+        </tr>
+    </table>
+</div>
+<br>
+{% endfor %}
+</div>
+{% endblock %}
+
+{% block end_scripts %}
+<script>
+    // changes color of each review according to how fun rating
+    // ranges from green to orange to red, with most fun rating (5)
+    // being green and least red
+    $(document).ready(function () {
+        $(".review").each(function (evt) {
+            let funness = $(this).attr("funness");
+            console.log("funness=" + funness);
+            if (funness == 5) {
+                $(this).css("background", "#bdffbe");
+            } else if (funness == 4) {
+                $(this).css("background", "#e6ffbd");
+            } else if (funness == 3) {
+                $(this).css("background", "#feffbd");
+            } else if (funness == 2) {
+                $(this).css("background", "#ffe6bd");
+            } else if (funness == 1) {
+                $(this).css("background", "#ffc5bd");
+            }
+        })
+    });
+
+    // updates up and down votes and their number displayed
+    function update_votes(resp) {
+        console.log(resp.rid);
+        var up_element = $(".thumbs").find($(".up_votes[data-rid='" + 
+                            resp.rid + "']"));
+        var down_element = $(".thumbs").find($(".down_votes[data-rid='" + 
+                            resp.rid + "']"));
+
+        $(up_element).text(resp.up);
+        $(down_element).text(resp.down);
+    }
+
+    var update_url = "{{url_for('vote')}}";
+
+    // when up/down vote clicked, displaying in console and updating
+    $(".thumb_up").on('click', function (evt) {
+        console.log(this);
+        var rid = $(this).attr("value");
+        console.log('rid is', rid);
+        $.post(update_url, { up: true, rid: rid }, update_votes);
+    });
+    $(".thumb_down").on('click', function (evt) {
+        console.log(this);
+        var rid = $(this).attr("value");
+        console.log('rid is', rid);
+        $.post(update_url, { down: true, rid: rid }, update_votes);
+    });
+
+</script>
+
+{% endblock %}
+====================== templates/department.html =====================
+<!-- show courses in dept -->
+{% extends "base.html" %}
+
+{% block main_content %}
+<h1>All Courses in {{classList.0.department}}:</h1>
+
+<!-- To sort courses in a department  -->
+<table id="sort-by">
+    <tr>
+        <td><p>Sort courses by :</p></td>
+        <td>
+        <form action="" method="POST">
+            <select name="sort_by" required>
+                <option value="" disabled selected hidden> sort by...</option>
+                <option value="fun">most to least fun</option>
+                <option value="relevant">most to least relevant</option>
+            </select>
+            <input class = 'submitButton' type="submit" value="sort">
+        </form>
+        </td>
+    </tr>
+</table>
+
+<!--displays all classes in dept with links to individual course review page-->
+<div id="classes">
+    <ul>
+        {% for class in classList %}
+        <li><a class="deptslink" href="{{ url_for('course', cid = class.cId) }}"> 
+            {{class.cId}} {{class.course_name}} </a></li>
+        {% endfor %} 
+    </ul>
+</div>
+{% endblock %}
+====================== templates/genform.html =====================
+<!-- general form to submit a review on course -->
+{% extends "base.html" %}
+
+{% block main_content %}
+
+<h1>Course Review Form</h1>
+
+<p class="reviewdir">Submit a review on how you felt about your course. <br>
+    <em>Note: All fields are required except for professor name.</em>
+    </p><br>
+
+<!-- form content -->
+<form id="reviewform" method="POST" action="{{url_for('submit_review')}}" 
+    enctype ="multipart/form-data">
+
+    <label for="courseID">Course ID (i.e. DEPT123):</label>
+    <input required type="text" id="courseID" name="courseID" maxlength="7"
+            placeholder="CS304">
+    <br><br>
+
+    <label for="hours">Hours per week:</label>
+    <input required id="hours" type="number" name="hours" min="0" max="168">
+    <br><br>
+
+    <span>Attendance:</span>
+        <input required type="radio" id="attendMand" name="attend" 
+            value="mandatory">
+        <label class="attendance" for="attendMand">mandatory</label>
+
+        <input required type="radio" id="attendNot" name="attend" 
+            value="not mandatory">
+        <label class="attendance" for="attendNot">not mandatory</label>
+    <br><br>
+
+    <span>Remote?:</span>
+        <input required type="radio" id="remoteY" name="remote" value="yes">
+        <label class="remote" for="remoteY">yes</label>
+
+        <input required type="radio" id="remoteN" name="remote" value="no">
+        <label class="remote" for="remoteN">no</label>
+    <br><br>
+
+    <fieldset>
+        <legend class="ratings">Ratings on...</legend>
+        <p>(1 is least, 5 is most)</p>
+        <!-- changing slider value referenced from stack overflow and 
+            adjusted for our needs-->
+        
+        <label for="fun">how fun?</label>
+        <input type="range" id="fun" name="fun" min="1" max="5" 
+        oninput="sliderNum1.value = this.value">
+        <output id="sliderNum1">3</output>
+        <br><br>
+
+        <label for="relevance">relevance to real world applications</label>
+        <input type="range" id="relevance" name="relevance" min="1" max="5" 
+        oninput="sliderNum2.value = this.value">
+        <output id="sliderNum2">3</output>
+        <br><br>
+    </fieldset>
+    <br>
+
+    <label for="prof">Professor (First and Last):</label>
+    <input type="text" id="prof" name="prof" maxlength="30" 
+        placeholder="Scott Anderson">
+    <br><br>
+
+    <label for="textInput">What was your opinion on the course?</label><br><br>
+    <textarea required id="textInput" name="textInput" rows="6" cols="50" 
+    placeholder="I liked/disliked the course, because..."></textarea>
+    <br><br>
+
+    <label>Syllabus: <input type="file" name="syllabus"></label>
+
+    <br><br>
+    <div style= "text-align: center;">
+        <input class = 'submitButton' type="submit" name="submit" value="submit">
+    </div>
+</form>
+
+{% endblock %}
+====================== templates/main.html =====================
+<!-- home page -->
+{% extends "base.html" %}
+
+{% block main_content %}
+<h1>Welcome to WOKE</h1>
+
+<!-- introduction -->
+<p id='welcome'>WOKE (Wellesley On Kourse Evaluations) is a place where 
+    you can submit your own reviews
+    <br>on courses you've taken at Wellesley or browse other student 
+    submissions. 
+    <br><br>Feel free to look by department and view course listings 
+    from there, <br>or search for it directly in the search box! 
+    <br><br><br><br><br>
+    Or check out the random course generated below!</p>
+
+<!-- random course generator on home page -->
+<div id='randomGenerator'>
+    <table id='randomCourse'>
+        <tr>
+            <th>Course ID</th>
+            <th>Name</th>
+            <th>Reviews</th>
+        </tr>
+        <tr>
+            <td>{{randomId}}</td>
+            <td>{{randomName}}</td>
+            <td><a href="{{url_for('course',cid=randomId)}}">
+                click here to view</a></td>
+        </tr>
+    </table>
+</div>
+
+{% endblock %}
+
+====================== templates/myreviews.html =====================
+<!-- Shows all reviews that one user has submitted, allowing updates/delete -->
+
+{% extends 'base.html' %}
+
+{% block main_content %}
+<h1>All of My Reviews</h1>
+
+<!-- all of one user's reviews for any course -->
+{% for review in my_reviews %}
+<div class="myreview" funness="{{review['how_fun']}}">
+    <p><b>Review {{review['rId']}}</b></p>
+    <table>
+        <tr>
+            <td>Course</td>
+            <td>: {{review['cId']}}</td>
+        </tr>
+        <tr>
+            <td>How Fun</td>
+            <td>: {{review['how_fun']}}</td>
+        </tr>
+        {% if review['textbook_isbn'] %}
+        <tr>
+            <td>Textbook ISBN</td>
+            <td>: {{review['textbook_isbn']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['hours'] %}
+        <tr>
+            <td>Hours spent per week</td>
+            <td>: {{review['hours']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['remote'] %}
+        <tr>
+            <td>Is it remote</td>
+            <td>: {{review['remote']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['attendance'] %}
+        <tr>
+            <td>Attendance</td>
+            <td>: {{review['attendance']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['professor'] %}
+        <tr>
+            <td>Professor</td>
+            <td>: {{review['professor']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['relevance'] %}
+        <tr>
+            <td>Relevance</td>
+            <td>: {{review['relevance']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['date_submitted'] %}
+        <tr>
+            <td>Submitted on</td>
+            <td>: {{review['date_submitted']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['username'] %}
+        <tr>
+            <td>Submitted by</td>
+            <td>: {{review['username']}}</td>
+        </tr>
+        {% endif %}
+        <tr>
+            <td>Review</td>
+            <td>: {{review['write_up']}}</td>
+        </tr>
+        {% if review['syllabus'] %}
+        <tr>
+            <td>Syllabus</td>
+            <td>:<a href="{{ url_for('download', rid=review['rId']) }}"> Download</a></td>
+        </tr>
+        {% endif %}
+    </table>
+
+    <!-- option to edit review (after clicked leads to update/delete) -->
+    <form id="updater" method="POST" action="{{url_for('my_reviews')}}">
+        <input class = "submitButton" type="submit" name="update" value="Edit">
+        <input type = "hidden" name = "rId" value = "{{review['rId']}}">
+    </form>
+</div>
+<br>
+{% endfor %}
+{% endblock %}
+====================== templates/pre_login.html =====================
+<!doctype html>
+<html lang='en'>
+<head>
+    <meta charset='utf-8'>
+    <meta name=author content="">
+    <title>WOKE Log-in</title>
+    <link rel='stylesheet' href="{{url_for('static', filename = 'style.css')}}">
+</head>
+<body>
+
+<!-- flash messages login -->
+{% with messages = get_flashed_messages() %}
+    {% if messages %}
+        <div id="messages">
+        {% for msg in messages %}
+            <p>{{msg}}</p>
+        {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<!-- CAS/login valid -->
+{% if username %}
+        <form method="GET" action="{{url_for('cas.logout')}}">
+            <button>logout {{username}}</button>
+        </form>
+   <p>CAS username: {{username}}</p>
+   <p>CAS attributes:</p>
+   <ul>
+        {% for key,val in cas_attributes.items() %}
+            <li>{{key}} &rArr; {{val}}</li>
+        {% endfor %}
+   </ul>
+
+{% else %}
+   <form method="GET" action="{{url_for('cas.login')}}">
+        <button>login</button>
+   </form>
+{% endif %}   
+
+{% block main_content %}
+<h1>Welcome!</h1>
+{% endblock %}
+
+</body>
+</html>
+====================== templates/searchdata.html =====================
+<!-- show searched classes -->
+{% extends "base.html" %}
+
+{% block main_content %}
+
+<h1>Result:</h1>
+
+<!-- displays search results with links (for more than one result) -->
+<div id="searchResult">
+    <ul>
+        {% for class in classList %}
+        <li id = "classes" ><a href="{{ url_for('course', cid = class.cId) }}"> 
+            {{class.cId}} {{class.course_name}} </a></li>
+        {% endfor %}
+    </ul>
+</div>
+
+{% endblock %}
+====================== templates/update.html =====================
+<!-- update.html is used to update the submitted form, looks similar
+but different due to backend -->
+{% extends "base.html" %}
+
+{% block main_content %}
+
+<h1>Update Review Form</h1>
+
+<p class="reviewdir">Update or delete your review:</p><br>
+
+<!-- form content -->
+<form id="reviewform" method="POST" action="{{url_for('update_review')}}">
+
+    <label for="courseID">Course ID (i.e. DEPT123):</label>
+    <input type="text" id="courseID" name="courseID" maxlength="7"
+            value= "{{ cId }}"/>
+    <input type="hidden" name="rId" value="{{ rId }}"/>
+    <br><br>
+
+    <label for="hours">Hours per week:</label>
+    <input required id="hours" type="number" name="hours" min="0" max="168" value = "{{ hours }}">
+    <br><br>
+
+    <span>Attendance:</span>
+        {% if amode == 'mandatory' %}
+            <input required type="radio" id="attendMand" name="attend" value="mandatory" checked/>
+            <label class="attendance" for="attendMand">mandatory</label>
+
+            <input required type="radio" id="attendNot" name="attend" value="not mandatory">
+            <label class="attendance" for="attendNot">not mandatory</label>
+        {% elif amode == 'not mandatory' %}
+            <input required type="radio" id="attendMand" name="attend" value="mandatory">
+            <label class="attendance" for="attendMand">mandatory</label>
+
+            <input required type="radio" id="attendNot" name="attend" value="not mandatory" checked/>
+            <label class="attendance" for="attendNot">not mandatory</label>
+        {% endif %}
+    <br><br>
+
+    <span>Remote?:</span>
+    {% if rmode == 'yes' %}
+        <input required type="radio" id="remoteY" name="remote" value="yes" checked/>
+        <label class="remote" for="remoteY">yes</label>
+
+        <input required type="radio" id="remoteN" name="remote" value="no">
+        <label class="remote" for="remoteN">no</label>
+    {% elif amode == 'no' %}
+        <input required type="radio" id="remoteY" name="remote" value="yes">
+        <label class="remote" for="remoteY">yes</label>
+
+        <input required type="radio" id="remoteN" name="remote" value="no" checked/>
+        <label class="remote" for="remoteN">no</label>
+    {% endif %}
+    <br><br>
+
+    <fieldset>
+        <legend class="ratings">Ratings on...</legend>
+        <p>(1 is least, 5 is most)</p>
+        
+        <label for="fun">how fun?</label>
+        <input type="range" id="fun" name="fun" min="1" max="5" value = "{{ fun }}"
+        oninput="sliderNum1.value = this.value">
+        <output id="sliderNum1">{{fun}}</output>
+        <br><br>
+
+        <label for="relevance">relevance to real world applications</label>
+        <input type="range" id="relevance" name="relevance" min="1" max="5" value = "{{ relevance }}"
+        oninput="sliderNum2.value = this.value">
+        <output id="sliderNum2">{{relevance}}</output>
+    </fieldset>
+    <br>
+
+    <label for="prof">Professor (First and Last):</label>
+    <input type="text" id="prof" name="prof" maxlength="30" placeholder="Scott Anderson" value = "{{ professor }}">
+    <br><br><br>
+
+    <label for="textInput">What was your opinion on the course?</label><br><br>
+    <input type = "text" required id="textInput" name="textInput" value = "{{ text }}">
+    <br><br>
+
+    <label>Syllabus: <input type="file" name="syllabus"></label>
+    
+    <input class = "submitButton" type="submit" name="submit" value="Update">
+    <input class = "submitButton" type="submit" name="submit" value="Delete">
+
+</form>
+
+{% endblock %}
+
+====================== static/*.js =====================
+
+====================== static/style.css =====================
+/* the --color-header and others are CSS variables, which we access later. */
+/* style.css for webpage appearance */
+
+/*******  OVERALL GENERAL CSS *******/
+HTML {
+    --color-header: #3e5e94;
+    --color-accent: #3b5c94;
+    --color-thinlines: #7398d0;
+    --color-darkaccent: #d8d8d8;
+    --color-lightaccent: #d6e6ff;
+}
+
+body {
+    font-family: 'Trebuchet MS', sans-serif;
+    font-size: 20px;
+    max-width: 1500px;
+    background-image: linear-gradient(#dbebff,#dbebff);
+    height: 100%;
+    margin: auto;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    padding: 50px;
+}
+
+h1 {
+    color: var(--color-header);
+    font-family: 'Didot', serif;
+    font-size: 50px;
+    text-align: center;
+}
+
+h2 {
+    color: var(--color-header);
+    text-align: center;
+}
+    
+/* for a simple navbar. Talk to Scott if you want drop-downs. */
+nav > ul {
+    display: flex;
+    flex-direction: row;
+}
+nav ul {
+    list-style-type: none;
+    margin: 0px;
+    padding: 0px;
+}
+nav > ul > li {
+    flex: 0 0 auto;
+    width: 12em; 
+}
+
+nav button, nav a {
+    display: block;
+    box-sizing: border-box; /* easier to make button and A the same size */
+    width: 100%;
+    height: 40px;
+    padding: 0px;
+    padding-bottom: 5px;
+    background-color: var(--color-accent);
+    border: 2px solid var(--color-thinlines);
+    border-radius: 5px;
+    cursor: pointer;
+    /* Firefox uses font -apple-system unless I repeat the font spec here. */
+    font-family: var(--font-family);
+    font-size: 1.2rem;
+    color: white;
+}
+
+/* Only the top-level buttons are centered; lower ones are left-aligned. */
+nav > ul > li > button , nav > ul > li > a {
+    text-align: center;
+}
+/* because of the margin trick, this can only be used for the last element */
+nav li.right {
+    margin-left: auto;
+}
+nav button:hover, button:focus, nav a:hover, nav a:focus {
+    background-color: var(--color-darkaccent);
+    color: var(--color-header);
+}
+
+#search {
+    text-align: right;
+}
+
+/* flash */
+#messages {
+    color: red;
+    text-decoration: underline;
+}
+
+/******* WELCOME PAGE *******/
+#welcome {
+    text-align: center;
+}
+
+#randomGenerator{
+    border: 6px dotted var(--color-thinlines);
+    border-radius: 50px;
+    text-align: center;
+    margin-left: 300px;
+    margin-right: 300px;
+    background-color: rgba(215, 215, 215, 0.4);
+    padding: 20px;
+}
+#randomCourse{
+    width: 100%;
+}
+
+/******* DEPT/CLASS PAGE *******/
+#departments {
+    margin-left: 200px;
+    margin-right: 200px;
+}
+.deptslink:link {
+    color: var(--color-header);
+}
+.deptslink:hover {
+    color: black;
+    background-color: white;
+}
+
+ul {
+    columns: 2;
+    -webkit-columns: 2;
+    -moz-columns: 2;
+}
+
+/******* INDIVIDUAL COURSE PAGE *******/
+#overview {
+    border: 6px dotted var(--color-thinlines);
+    border-radius: 50px;
+    text-align: center;
+    margin-left: 200px;
+    margin-right: 200px;
+    background-color: rgba(215, 215, 215, 0.3);
+}
+
+#averages {
+    width: 100%;
+}
+#avgNums {
+    font-size: 28px;
+}
+
+.review {
+    border-radius: 30px;
+    padding: 40px;
+}
+
+/******* SUBMIT REVIEW PAGE *******/
+#reviewform,.reviewdir {
+    margin-left: 300px;
+    margin-right: 300px;
+}
+#textInput {
+    width: 100%;
+}
+
+.submitButton {
+    background-color: var(--color-accent);
+    border: solid;
+    border-width: 3px;
+    border-color: var(--color-thinlines);
+    border-radius: 10px;
+    text-align: center;
+    padding: 5px;
+    font-size: 18px;
+    color: white;
+}
+.submitButton:hover {
+    background-color: var(--color-darkaccent);
+    color: var(--color-header);
+}
+
+#sliderNum1,#sliderNum2 {
+    border: 3px solid var(--color-thinlines);
+    background-color: var(--color-accent);
+    border-radius: 30%;
+    padding: 5px;
+    color: white;
+}
+
+fieldset {
+    border: 3px solid white;
+}
+
+/******* MY REVIEWS PAGE *******/
+.myreview {
+    border: 6px dotted var(--color-thinlines);
+    background-color: rgba(215, 215, 215, 0.4);
+    border-radius: 30px;
+    padding: 40px;
+}
+
+.navbar {
+    color: white;
+}

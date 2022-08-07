@@ -1,0 +1,33 @@
+<!-- show courses in dept -->
+{% extends "base.html" %}
+
+{% block main_content %}
+<h1>All Courses in {{classList.0.department}}:</h1>
+
+<!-- To sort courses in a department  -->
+<table id="sort-by">
+    <tr>
+        <td><p>Sort courses by :</p></td>
+        <td>
+        <form action="" method="POST">
+            <select name="sort_by" required>
+                <option value="" disabled selected hidden> sort by...</option>
+                <option value="fun">most to least fun</option>
+                <option value="relevant">most to least relevant</option>
+            </select>
+            <input class = 'submitButton' type="submit" value="sort">
+        </form>
+        </td>
+    </tr>
+</table>
+
+<!--displays all classes in dept with links to individual course review page-->
+<div id="classes">
+    <ul>
+        {% for class in classList %}
+        <li><a class="deptslink" href="{{ url_for('course', cid = class.cId) }}"> 
+            {{class.cId}} {{class.course_name}} </a></li>
+        {% endfor %} 
+    </ul>
+</div>
+{% endblock %}

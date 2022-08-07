@@ -1,0 +1,18 @@
+<!-- show searched classes -->
+{% extends "base.html" %}
+
+{% block main_content %}
+
+<h1>Result:</h1>
+
+<!-- displays search results with links (for more than one result) -->
+<div id="searchResult">
+    <ul>
+        {% for class in classList %}
+        <li id = "classes" ><a href="{{ url_for('course', cid = class.cId) }}"> 
+            {{class.cId}} {{class.course_name}} </a></li>
+        {% endfor %}
+    </ul>
+</div>
+
+{% endblock %}

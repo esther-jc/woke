@@ -1,0 +1,89 @@
+<!-- Shows all reviews that one user has submitted, allowing updates/delete -->
+
+{% extends 'base.html' %}
+
+{% block main_content %}
+<h1>All of My Reviews</h1>
+
+<!-- all of one user's reviews for any course -->
+{% for review in my_reviews %}
+<div class="myreview" funness="{{review['how_fun']}}">
+    <p><b>Review {{review['rId']}}</b></p>
+    <table>
+        <tr>
+            <td>Course</td>
+            <td>: {{review['cId']}}</td>
+        </tr>
+        <tr>
+            <td>How Fun</td>
+            <td>: {{review['how_fun']}}</td>
+        </tr>
+        {% if review['textbook_isbn'] %}
+        <tr>
+            <td>Textbook ISBN</td>
+            <td>: {{review['textbook_isbn']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['hours'] %}
+        <tr>
+            <td>Hours spent per week</td>
+            <td>: {{review['hours']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['remote'] %}
+        <tr>
+            <td>Is it remote</td>
+            <td>: {{review['remote']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['attendance'] %}
+        <tr>
+            <td>Attendance</td>
+            <td>: {{review['attendance']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['professor'] %}
+        <tr>
+            <td>Professor</td>
+            <td>: {{review['professor']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['relevance'] %}
+        <tr>
+            <td>Relevance</td>
+            <td>: {{review['relevance']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['date_submitted'] %}
+        <tr>
+            <td>Submitted on</td>
+            <td>: {{review['date_submitted']}}</td>
+        </tr>
+        {% endif %}
+        {% if review['username'] %}
+        <tr>
+            <td>Submitted by</td>
+            <td>: {{review['username']}}</td>
+        </tr>
+        {% endif %}
+        <tr>
+            <td>Review</td>
+            <td>: {{review['write_up']}}</td>
+        </tr>
+        {% if review['syllabus'] %}
+        <tr>
+            <td>Syllabus</td>
+            <td>:<a href="{{ url_for('download', rid=review['rId']) }}"> Download</a></td>
+        </tr>
+        {% endif %}
+    </table>
+
+    <!-- option to edit review (after clicked leads to update/delete) -->
+    <form id="updater" method="POST" action="{{url_for('my_reviews')}}">
+        <input class = "submitButton" type="submit" name="update" value="Edit">
+        <input type = "hidden" name = "rId" value = "{{review['rId']}}">
+    </form>
+</div>
+<br>
+{% endfor %}
+{% endblock %}

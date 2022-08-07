@@ -1,0 +1,198 @@
+/* the --color-header and others are CSS variables, which we access later. */
+/* style.css for webpage appearance */
+
+/*******  OVERALL GENERAL CSS *******/
+HTML {
+    --color-header: #3e5e94;
+    --color-accent: #3b5c94;
+    --color-thinlines: #7398d0;
+    --color-darkaccent: #d8d8d8;
+    --color-lightaccent: #d6e6ff;
+}
+
+body {
+    font-family: 'Trebuchet MS', sans-serif;
+    font-size: 20px;
+    max-width: 1500px;
+    background-image: linear-gradient(#dbebff,#dbebff);
+    height: 100%;
+    margin: auto;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    padding: 50px;
+}
+
+h1 {
+    color: var(--color-header);
+    font-family: 'Didot', serif;
+    font-size: 50px;
+    text-align: center;
+}
+
+h2 {
+    color: var(--color-header);
+    text-align: center;
+}
+    
+/* for a simple navbar. Talk to Scott if you want drop-downs. */
+nav > ul {
+    display: flex;
+    flex-direction: row;
+}
+nav ul {
+    list-style-type: none;
+    margin: 0px;
+    padding: 0px;
+}
+nav > ul > li {
+    flex: 0 0 auto;
+    width: 12em; 
+}
+
+nav button, nav a {
+    display: block;
+    box-sizing: border-box; /* easier to make button and A the same size */
+    width: 100%;
+    height: 40px;
+    padding: 0px;
+    padding-bottom: 5px;
+    background-color: var(--color-accent);
+    border: 2px solid var(--color-thinlines);
+    border-radius: 5px;
+    cursor: pointer;
+    /* Firefox uses font -apple-system unless I repeat the font spec here. */
+    font-family: var(--font-family);
+    font-size: 1.2rem;
+    color: white;
+}
+
+/* Only the top-level buttons are centered; lower ones are left-aligned. */
+nav > ul > li > button , nav > ul > li > a {
+    text-align: center;
+}
+/* because of the margin trick, this can only be used for the last element */
+nav li.right {
+    margin-left: auto;
+}
+nav button:hover, button:focus, nav a:hover, nav a:focus {
+    background-color: var(--color-darkaccent);
+    color: var(--color-header);
+}
+
+#search {
+    text-align: right;
+}
+
+/* flash */
+#messages {
+    color: red;
+    text-decoration: underline;
+}
+
+/******* WELCOME PAGE *******/
+#welcome {
+    text-align: center;
+}
+
+#randomGenerator{
+    border: 6px dotted var(--color-thinlines);
+    border-radius: 50px;
+    text-align: center;
+    margin-left: 300px;
+    margin-right: 300px;
+    background-color: rgba(215, 215, 215, 0.4);
+    padding: 20px;
+}
+#randomCourse{
+    width: 100%;
+}
+
+/******* DEPT/CLASS PAGE *******/
+#departments {
+    margin-left: 200px;
+    margin-right: 200px;
+}
+.deptslink:link {
+    color: var(--color-header);
+}
+.deptslink:hover {
+    color: black;
+    background-color: white;
+}
+
+ul {
+    columns: 2;
+    -webkit-columns: 2;
+    -moz-columns: 2;
+}
+
+/******* INDIVIDUAL COURSE PAGE *******/
+#overview {
+    border: 6px dotted var(--color-thinlines);
+    border-radius: 50px;
+    text-align: center;
+    margin-left: 200px;
+    margin-right: 200px;
+    background-color: rgba(215, 215, 215, 0.3);
+}
+
+#averages {
+    width: 100%;
+}
+#avgNums {
+    font-size: 28px;
+}
+
+.review {
+    border-radius: 30px;
+    padding: 40px;
+}
+
+/******* SUBMIT REVIEW PAGE *******/
+#reviewform,.reviewdir {
+    margin-left: 300px;
+    margin-right: 300px;
+}
+#textInput {
+    width: 100%;
+}
+
+.submitButton {
+    background-color: var(--color-accent);
+    border: solid;
+    border-width: 3px;
+    border-color: var(--color-thinlines);
+    border-radius: 10px;
+    text-align: center;
+    padding: 5px;
+    font-size: 18px;
+    color: white;
+}
+.submitButton:hover {
+    background-color: var(--color-darkaccent);
+    color: var(--color-header);
+}
+
+#sliderNum1,#sliderNum2 {
+    border: 3px solid var(--color-thinlines);
+    background-color: var(--color-accent);
+    border-radius: 30%;
+    padding: 5px;
+    color: white;
+}
+
+fieldset {
+    border: 3px solid white;
+}
+
+/******* MY REVIEWS PAGE *******/
+.myreview {
+    border: 6px dotted var(--color-thinlines);
+    background-color: rgba(215, 215, 215, 0.4);
+    border-radius: 30px;
+    padding: 40px;
+}
+
+.navbar {
+    color: white;
+}
